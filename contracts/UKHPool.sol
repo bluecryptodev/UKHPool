@@ -10,6 +10,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 import "./interfaces/IUniswapV2Router02.sol";
 import "./interfaces/IUniswapV2Factory.sol";
+import "./interfaces/IUniswapV2Pair.sol";
 
 contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
     using SafeMathUpgradeable for uint256;
@@ -19,7 +20,7 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
     uint256 private _maxAmountOfToken = 0;
     address private _tokenAddress;
 
-    uint256 private _timeLockDuration = 10 minutes; //to test
+    uint256 private _timeLockDuration = 10 minutes;
 
     bool _closeSale = false;
 
@@ -41,8 +42,14 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
         initCommissionRate();
         IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(_routerV2);
         // Create a uniswap pair for this new token
-        uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory())
-            .createPair(address(this), _uniswapV2Router.WETH());
+        address pairAddress = IUniswapV2Factory(_uniswapV2Router.factory())
+            .getPair(address(tokenAddress), _uniswapV2Router.WETH());
+        if (pairAddress == address(0)) {
+            uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory())
+                .createPair(address(tokenAddress), _uniswapV2Router.WETH());
+        } else {
+            uniswapV2Pair = pairAddress;
+        }
 
         // set the rest of the contract variables
         uniswapV2Router = _uniswapV2Router;
@@ -112,6 +119,10 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
         IERC20Upgradeable(_tokenAddress).transfer(receiver, anmount);
     }
 
+    function tokenApprove(uint256 tokenAmount) public onlyOwner {
+        token.approve(address(uniswapV2Router), tokenAmount);
+    }
+
     function addLiquidity(uint256 tokenAmount, uint256 ethAmount)
         public
         onlyOwner
@@ -130,17 +141,24 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
         );
     }
 
-    function removeLiquidity(uint256 tokenAmount) public onlyOwner {
+    function lpTokenAprrove(uint256 liquidity) public onlyOwner {
+        IUniswapV2Pair(uniswapV2Pair).approve(address(this), liquidity);
+        IUniswapV2Pair(uniswapV2Pair).approve(
+            address(uniswapV2Router),
+            liquidity
+        );
+    }
+
+    function removeLiquidity(uint256 liquidity) public onlyOwner {
         // approve token transfer to cover all possible scenarios
-        token.approve(address(uniswapV2Router), tokenAmount);
 
         // add the liquidity
         uniswapV2Router.removeLiquidityETH(
             address(token),
-            tokenAmount,
+            liquidity,
             0, // slippage is unavoidable
             0, // slippage is unavoidable
-            address(token),
+            address(this),
             block.timestamp
         );
     }
@@ -166,7 +184,7 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
 
     function redeem() external {
         require(
-            block.timestamp > _contributesTime[_msgSender()],
+            block.timestamp < _contributesTime[_msgSender()],
             "Don't allow this feature"
         );
 
