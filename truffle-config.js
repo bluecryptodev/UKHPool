@@ -1,5 +1,6 @@
 var HDWalletProvider = require('@truffle/hdwallet-provider');
-var mnemonic = '';
+require('dotenv').config();
+var mnemonic = process.env.MNEMONIC;
 module.exports = {
   networks: {
     development: {
@@ -11,7 +12,18 @@ module.exports = {
       provider: function () {
         return new HDWalletProvider(
           mnemonic,
-          'https://rinkeby.infura.io/v3/d71b42c01cf54074865369d83e4c239f',
+          `https://rinkeby.infura.io/v3/${process.env.API_KEY}`,
+        );
+      },
+      network_id: 4,
+      gas: 4500000,
+      gasPrice: 10000000000,
+    },
+    ropsten: {
+      provider: function () {
+        return new HDWalletProvider(
+          mnemonic,
+          `https://ropsten.infura.io/v3/${process.env.API_KEY}`,
         );
       },
       network_id: 4,
@@ -21,7 +33,8 @@ module.exports = {
   },
   compilers: {
     solc: {
-      version: '^0.6.2',
+      version: '^0.8.0',
     },
   },
+  plugins: ['truffle-plugin-verify'],
 };
