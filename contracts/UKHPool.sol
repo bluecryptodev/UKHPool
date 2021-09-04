@@ -168,6 +168,7 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
 
     //function for all users
     function subscribe(uint256 amount) external {
+        require(_closeSale == false, "This sale is finished by admin!");
         require(
             _totalTokenAmount.add(amount) < _maxAmountOfToken,
             "You can't contribute more than maximum token amount"
@@ -177,7 +178,6 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
             _contributesAmount[_msgSender()] <= 0,
             "You have already contributed"
         );
-        require(_closeSale == false, "This sale is finished by admin!");
         uint256 allowance = token.allowance(msg.sender, address(this));
         require(allowance >= amount, "Check the token allowance");
         _contributesAmount[msg.sender] = amount;
