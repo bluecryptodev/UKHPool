@@ -4,7 +4,6 @@ pragma solidity >=0.6.0;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/AddressUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
@@ -12,7 +11,7 @@ import "./interfaces/IUniswapV2Router02.sol";
 import "./interfaces/IUniswapV2Factory.sol";
 import "./interfaces/IUniswapV2Pair.sol";
 
-contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
+contract UHKPool is OwnableUpgradeable {
     using SafeMathUpgradeable for uint256;
     using AddressUpgradeable for address;
 
@@ -21,10 +20,8 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
     IUniswapV2Pair public uniswapV2Pair;
 
     uint256 private _maxAmountOfToken;
-    uint256 public _totalTokenAmount = 0;
-    uint256 public _LPEtherAmount = 0;
-    address private _tokenAddress;
-    uint256 public _initialExchangeRate;
+    uint256 private _totalTokenAmount;
+    uint256 private _initialExchangeRate;
 
     uint256 private _timeLockDuration = 180 days;
 
@@ -36,13 +33,12 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
 
     event Contribute(address indexed investor, uint256 value);
 
-    constructor(
+    function initialize(
         address tokenAddress,
         address routerAddress,
         uint256 maxTokenAmount
-    ) {
+    ) public initializer {
         OwnableUpgradeable.__Ownable_init();
-        _tokenAddress = tokenAddress;
         _maxAmountOfToken = maxTokenAmount;
         token = IERC20Upgradeable(tokenAddress);
         initCommissionRate();
@@ -81,7 +77,7 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
     }
 
     function getTokenAddress() public view returns (address) {
-        return _tokenAddress;
+        return address(token);
     }
 
     function getTimeLockDuration() public view returns (uint256) {
@@ -95,14 +91,14 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
 
     function setTokenAddress(address tokenAddress) external onlyOwner {
         require(
-            _tokenAddress != tokenAddress,
+            address(token) != tokenAddress,
             "Can't change same token address"
         );
         require(
             tokenAddress != address(0),
             "The token address can not be 0 address"
         );
-        _tokenAddress = tokenAddress;
+        token = IERC20Upgradeable(tokenAddress);
     }
 
     function setTimeLockDuration(uint256 duration) external onlyOwner {
@@ -140,8 +136,8 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
     }
 
     //withdraw Token
-    function withdrawToken(address receiver, uint256 anmount) public onlyOwner {
-        _withdrawToken(receiver, anmount);
+    function withdrawToken(address receiver, uint256 amount) public onlyOwner {
+        _withdrawToken(receiver, amount);
     }
 
     function tokenApprove(uint256 tokenAmount) public onlyOwner {
@@ -151,11 +147,11 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
     function addLiquidity() public onlyOwner {
         require(_closeSale == true, "This sale did not close yet");
         uint256 lpEtherAmount = _totalTokenAmount.div(_initialExchangeRate);
-        _LPEtherAmount = lpEtherAmount;
         require(
             address(this).balance >= lpEtherAmount,
             "Ether amount is not engough"
         );
+        token.approve(address(uniswapV2Router), _totalTokenAmount);
         _addLiquidity(_totalTokenAmount, lpEtherAmount);
     }
 
@@ -215,8 +211,8 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
     }
 
     function _withdrawToken(address receiver, uint256 amount) private {
-        require(anmount > 0, "You need to send some token");
-        token.transfer(receiver, anmount);
+        require(amount > 0, "You need to send some token");
+        token.transfer(receiver, amount);
     }
 
     function _addLiquidity(uint256 tokenAmount, uint256 etherAmount) private {
