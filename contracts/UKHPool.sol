@@ -17,16 +17,18 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
     using AddressUpgradeable for address;
 
     IERC20Upgradeable token;
-    uint256 private _maxAmountOfToken = 0;
-    address private _tokenAddress;
+    IUniswapV2Router02 public uniswapV2Router;
+    IUniswapV2Pair public uniswapV2Pair;
 
-    uint256 private _timeLockDuration = 10 minutes;
+    uint256 private _maxAmountOfToken;
+    uint256 public _totalTokenAmount = 0;
+    uint256 public _LPEtherAmount = 0;
+    address private _tokenAddress;
+    uint256 public _initialExchangeRate;
+
+    uint256 private _timeLockDuration = 180 days;
 
     bool _closeSale = false;
-
-    address private _routerV2 = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
-    IUniswapV2Router02 public uniswapV2Router;
-    address public uniswapV2Pair;
 
     mapping(address => uint256) private _contributesAmount;
     mapping(address => uint256) private _contributesTime;
@@ -34,25 +36,33 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
 
     event Contribute(address indexed investor, uint256 value);
 
-    constructor(address tokenAddress, uint256 maxTokenAmount) {
+    constructor(
+        address tokenAddress,
+        address routerAddress,
+        uint256 maxTokenAmount
+    ) {
         OwnableUpgradeable.__Ownable_init();
         _tokenAddress = tokenAddress;
         _maxAmountOfToken = maxTokenAmount;
         token = IERC20Upgradeable(tokenAddress);
         initCommissionRate();
-        IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(_routerV2);
+        IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(routerAddress);
         // Create a uniswap pair for this new token
         address pairAddress = IUniswapV2Factory(_uniswapV2Router.factory())
             .getPair(address(tokenAddress), _uniswapV2Router.WETH());
         if (pairAddress == address(0)) {
-            uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory())
-                .createPair(address(tokenAddress), _uniswapV2Router.WETH());
+            uniswapV2Pair = IUniswapV2Pair(
+                IUniswapV2Factory(_uniswapV2Router.factory()).createPair(
+                    address(tokenAddress),
+                    _uniswapV2Router.WETH()
+                )
+            );
         } else {
-            uniswapV2Pair = pairAddress;
+            uniswapV2Pair = IUniswapV2Pair(pairAddress);
         }
-
         // set the rest of the contract variables
         uniswapV2Router = _uniswapV2Router;
+        _initialExchangeRate = 10000;
     }
 
     receive() external payable {}
@@ -96,12 +106,29 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
     }
 
     function setTimeLockDuration(uint256 duration) external onlyOwner {
-        require(duration == 0, "The time lock duration can not be 0");
-        _timeLockDuration = block.timestamp + duration;
+        require(duration > 0, "The time lock duration can not be 0");
+        _timeLockDuration = duration * 1 days;
+    }
+
+    function setInitialExchangeRate(uint256 exchageRate) external onlyOwner {
+        require(exchageRate > 0, "The exchange rate must be over 0");
+        _initialExchangeRate = exchageRate;
+    }
+
+    function setCommissionRatePlan(string memory level, uint256 rate)
+        external
+        onlyOwner
+    {
+        // level condition, when level does not exit.
+        _commissionRatePlan[level] = rate;
     }
 
     function closeSale() external onlyOwner {
         _closeSale = true;
+    }
+
+    function openSale() external onlyOwner {
+        _closeSale = false;
     }
 
     //withdraw ETH
@@ -109,29 +136,92 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
         public
         onlyOwner
     {
-        bool sent = receiver.send(amount);
-        require(sent, "Failed to send Ether");
+        _withdrawETH(receiver, amount);
     }
 
     //withdraw Token
     function withdrawToken(address receiver, uint256 anmount) public onlyOwner {
-        require(anmount > 0, "You need to send some token");
-        IERC20Upgradeable(_tokenAddress).transfer(receiver, anmount);
+        _withdrawToken(receiver, anmount);
     }
 
     function tokenApprove(uint256 tokenAmount) public onlyOwner {
         token.approve(address(uniswapV2Router), tokenAmount);
     }
 
-    function addLiquidity(uint256 tokenAmount, uint256 ethAmount)
-        public
-        onlyOwner
-    {
-        // approve token transfer to cover all possible scenarios
-        token.approve(address(uniswapV2Router), tokenAmount);
+    function addLiquidity() public onlyOwner {
+        require(_closeSale == true, "This sale did not close yet");
+        uint256 lpEtherAmount = _totalTokenAmount.div(_initialExchangeRate);
+        _LPEtherAmount = lpEtherAmount;
+        require(
+            address(this).balance >= lpEtherAmount,
+            "Ether amount is not engough"
+        );
+        _addLiquidity(_totalTokenAmount, lpEtherAmount);
+    }
 
+    function lpTokenAprrove(uint256 liquidity) public onlyOwner {
+        uniswapV2Pair.approve(address(this), liquidity);
+        uniswapV2Pair.approve(address(uniswapV2Router), liquidity);
+    }
+
+    function removeLiquidity() public onlyOwner {}
+
+    //function for all users
+    function subscribe(uint256 amount) external {
+        require(
+            _totalTokenAmount.add(amount) < _maxAmountOfToken,
+            "You can't contribute more than maximum token amount"
+        );
+        require(amount > 0, "You need to sell at least some tokens");
+        require(
+            _contributesAmount[_msgSender()] <= 0,
+            "You have already contributed"
+        );
+        require(_closeSale == false, "This sale is finished by admin!");
+        uint256 allowance = token.allowance(msg.sender, address(this));
+        require(allowance >= amount, "Check the token allowance");
+        _contributesAmount[msg.sender] = amount;
+        _contributesTime[_msgSender()] = block.timestamp + _timeLockDuration;
+        _totalTokenAmount = _totalTokenAmount.add(amount);
+        token.transferFrom(msg.sender, address(this), amount);
+    }
+
+    function redeem() external {
+        require(
+            _contributesAmount[_msgSender()] > 0,
+            "You didn't contribut yet"
+        );
+        require(
+            block.timestamp > _contributesTime[_msgSender()],
+            "Don't allow this feature"
+        );
+        uint256 removeLPTokenAmount = _getRemoveLPTokenAmount(_msgSender());
+        (uint256 amountToken, uint256 amountETH) = _removeLiquidity(
+            removeLPTokenAmount
+        );
+        (uint256 rate, uint256 profitTokenAmount) = _getCommissionRate(
+            _contributesAmount[_msgSender()],
+            amountToken
+        );
+        _totalTokenAmount.sub(_contributesAmount[_msgSender()]);
+        _contributesAmount[_msgSender()] = 0;
+        token.transfer(_msgSender(), profitTokenAmount);
+        _withdrawETH(payable(_msgSender()), amountETH.mul(rate));
+    }
+
+    function _withdrawETH(address payable receiver, uint256 amount) private {
+        bool sent = receiver.send(amount);
+        require(sent, "Failed to send Ether");
+    }
+
+    function _withdrawToken(address receiver, uint256 amount) private {
+        require(anmount > 0, "You need to send some token");
+        token.transfer(receiver, anmount);
+    }
+
+    function _addLiquidity(uint256 tokenAmount, uint256 etherAmount) private {
         // add the liquidity
-        uniswapV2Router.addLiquidityETH{value: ethAmount}(
+        uniswapV2Router.addLiquidityETH{value: etherAmount}(
             address(token),
             tokenAmount,
             0, // slippage is unavoidable
@@ -141,59 +231,26 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
         );
     }
 
-    function lpTokenAprrove(uint256 liquidity) public onlyOwner {
+    function _removeLiquidity(uint256 liquidity)
+        private
+        returns (uint256 amountToken, uint256 amountETH)
+    {
         IUniswapV2Pair(uniswapV2Pair).approve(address(this), liquidity);
         IUniswapV2Pair(uniswapV2Pair).approve(
             address(uniswapV2Router),
             liquidity
         );
-    }
-
-    function removeLiquidity(uint256 liquidity) public onlyOwner {
-        // approve token transfer to cover all possible scenarios
 
         // add the liquidity
-        uniswapV2Router.removeLiquidityETH(
-            address(token),
-            liquidity,
-            0, // slippage is unavoidable
-            0, // slippage is unavoidable
-            address(this),
-            block.timestamp
-        );
-    }
-
-    //function for all users
-    function subscribe(uint256 amount) external {
-        require(
-            amount < _maxAmountOfToken,
-            "You can't contribute more than maximum token amount"
-        );
-        require(amount > 0, "You need to sell at least some tokens");
-        require(_closeSale == false, "This sale is finished by admin!");
-        uint256 allowance = token.allowance(msg.sender, address(this));
-        require(allowance >= amount, "Check the token allowance");
-        _contributesAmount[msg.sender] = amount;
-        _contributesTime[_msgSender()] = block.timestamp + _timeLockDuration;
-        IERC20Upgradeable(_tokenAddress).transferFrom(
-            msg.sender,
-            address(this),
-            amount
-        );
-    }
-
-    function redeem() external {
-        require(
-            block.timestamp < _contributesTime[_msgSender()],
-            "Don't allow this feature"
-        );
-
-        (uint256 rate, uint256 profitTokenAmount) = _getCommissionRate(
-            _contributesAmount[_msgSender()],
-            100000000
-        );
-        _contributesAmount[_msgSender()] = 0;
-        token.transfer(_msgSender(), profitTokenAmount);
+        return
+            uniswapV2Router.removeLiquidityETH(
+                address(token),
+                liquidity,
+                0, // slippage is unavoidable
+                0, // slippage is unavoidable
+                address(this),
+                block.timestamp
+            );
     }
 
     function _getCommissionRate(uint256 contributeAmount, uint256 totalAmount)
@@ -235,5 +292,17 @@ contract UHKPool is Initializable, ContextUpgradeable, OwnableUpgradeable {
         }
 
         return (rate, profitTokenAmount);
+    }
+
+    function _getRemoveLPTokenAmount(address requester)
+        private
+        view
+        returns (uint256)
+    {
+        uint256 lpTokenAmount = uniswapV2Pair.balanceOf(address(this));
+        uint256 percentOfReuester = _contributesAmount[requester]
+            .mul(10000)
+            .div(_totalTokenAmount);
+        return lpTokenAmount.mul(percentOfReuester).div(10000);
     }
 }
