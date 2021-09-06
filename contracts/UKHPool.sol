@@ -1,8 +1,7 @@
 // Token Pool
 // SPDX-License-Identifier: MIT
-pragma solidity >=0.6.0;
+pragma solidity 0.8.7;
 
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/AddressUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
@@ -23,7 +22,7 @@ contract UHKPool is OwnableUpgradeable {
     uint256 private _totalTokenAmount;
     uint256 private _initialExchangeRate;
 
-    uint256 private _timeLockDuration = 180 days;
+    uint256 private _timeLockDuration;
 
     bool _closeSale = false;
 
@@ -119,12 +118,8 @@ contract UHKPool is OwnableUpgradeable {
         _commissionRatePlan[level] = rate;
     }
 
-    function closeSale() external onlyOwner {
-        _closeSale = true;
-    }
-
-    function openSale() external onlyOwner {
-        _closeSale = false;
+    function closeOpenSale(bool sale) external onlyOwner {
+        _closeSale = sale;
     }
 
     //withdraw ETH
@@ -138,10 +133,6 @@ contract UHKPool is OwnableUpgradeable {
     //withdraw Token
     function withdrawToken(address receiver, uint256 amount) public onlyOwner {
         _withdrawToken(receiver, amount);
-    }
-
-    function tokenApprove(uint256 tokenAmount) public onlyOwner {
-        token.approve(address(uniswapV2Router), tokenAmount);
     }
 
     function addLiquidity() public onlyOwner {
